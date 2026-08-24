@@ -1,5 +1,3 @@
-# PROMPTS.md
-
 # Prompt Engineering
 
 This document describes the prompts used in the Trendly AI Support Assistant and how they were refined during development to improve accuracy, consistency, and safety.
