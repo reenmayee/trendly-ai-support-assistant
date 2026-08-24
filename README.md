@@ -4,6 +4,10 @@ An AI-powered customer support assistant built for **Trendly**, a direct-to-cons
 
 Built for the **Yellow.ai Generative AI Developer Internship Assignment**.
 
+[![Live Demo](https://img.shields.io/badge/Live-Demo-8A5CF6?style=for-the-badge&logo=streamlit&logoColor=white)](https://trendly-ai-assistant.streamlit.app/)
+[![Python](https://img.shields.io/badge/Python-3.12-blue?style=for-the-badge&logo=python&logoColor=white)](https://python.org)
+[![Streamlit](https://img.shields.io/badge/Built%20with-Streamlit-FF4B4B?style=for-the-badge&logo=streamlit&logoColor=white)](https://streamlit.io)
+
 ---
 
 ## ✨ Features
