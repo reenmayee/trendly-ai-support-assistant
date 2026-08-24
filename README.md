@@ -1,92 +1,183 @@
 # 🛍️ Trendly AI Support Assistant
 
-A Gemini-powered AI customer support agent built for the **Yellow.ai Forward Deployed Engineer (AI Intern) Assignment**.
+An AI-powered customer support agent built for **Trendly**, a direct-to-consumer fashion retailer, to automate high-volume customer support conversations using **LLMs, RAG, tool orchestration, and prompt engineering**.
 
-The assistant helps Trendly customers with order tracking, returns, exchanges, refunds, shipping policy questions, and human support escalation using tool calling and Retrieval-Augmented Generation (RAG).
-
----
-
-## Features
-
-* 📦 **Order Lookup Tool**
-
-  * Retrieves order details from `orders.json`.
-  * Explains order status in plain English.
-  * Handles delayed, partially shipped, cancelled, and lost orders.
-
-* 🔄 **Return & Exchange Eligibility**
-
-  * Uses order information + Trendly policy rules.
-  * Approves eligible returns.
-  * Rejects ineligible returns with the correct reason.
-  * Supports exchange-only items.
-
-* 📚 **RAG Policy Assistant**
-
-  * Answers shipping, refund, return, and exchange questions.
-  * Uses **only** `trendly_policy.md`.
-  * Does not invent policies.
-
-* 🚨 **Human Escalation**
-
-  * Escalates damaged, wrong-size, wrong-item, and lost shipment cases.
-  * Generates a support summary for a human agent.
-
-* 🛡️ **Safety Guardrails**
-
-  * Refuses unauthorized discounts.
-  * Refuses invented policies.
-  * Protects customer personal information.
-
-* 💬 **Multi-turn Memory**
-
-  * Remembers the last order discussed.
-  * Example:
-
-    * User: "Can I return TR-4530?"
-    * User: "Can I return it?"
-    * Assistant understands "it" refers to TR-4530.
+This project was built as part of the **Yellow.ai Generative AI Developer Internship assignment**, with a focus on building a reliable conversational AI system rather than a simple chatbot.
 
 ---
 
-## Tech Stack
+## ✨ Overview
 
-| Layer      | Technology                             |
-| ---------- | -------------------------------------- |
-| LLM        | Gemini 3.6 Flash                       |
-| RAG        | LangChain + ChromaDB                   |
-| Embeddings | sentence-transformers/all-MiniLM-L6-v2 |
-| Frontend   | Streamlit                              |
-| Language   | Python 3.12                            |
+Trendly receives thousands of customer support chats every day. Around **70%** of these conversations are repetitive:
+
+* Order tracking
+* Returns & exchanges
+* Refund eligibility
+* Shipping and refund policy questions
+
+This assistant automates those workflows end-to-end while safely escalating unsupported cases to a human support specialist.
+
+The agent combines deterministic Python tools with Gemini for grounded natural-language responses.
 
 ---
 
-## Project Structure
+## 🚀 Features
+
+### 📦 Order Lookup
+
+* Track orders using an Order ID (e.g. `TR-4521`).
+* Explain order status in customer-friendly language.
+* Handles edge cases including:
+
+  * In Transit
+  * Delivered
+  * Delayed Shipment
+  * Partially Shipped
+  * Lost in Transit
+  * Cancelled Orders
+
+### 🔁 Returns & Exchanges
+
+* Checks eligibility using both **order data** and **Trendly policy**.
+* Enforces:
+
+  * 30-day return window.
+  * Jewellery non-returnable policy.
+  * Final Sale exchange-only policy.
+  * Cancelled orders cannot be returned.
+  * Lost shipments are escalated instead of returned.
+
+### 📚 Policy Question Answering (RAG)
+
+* Answers shipping, refund, return, and exchange policy questions.
+* Uses **Retrieval-Augmented Generation (RAG)** over `trendly_policy.md`.
+* Does **not** answer from model memory.
+* Refuses to invent policies if information is unavailable.
+
+### 🚨 Human Escalation
+
+Automatically escalates issues such as:
+
+* Wrong item received.
+* Wrong size received.
+* Damaged product.
+* Defective product.
+* Lost shipment.
+* Missing package.
+
+Generates a structured support ticket with issue summary and next steps.
+
+### 🛡️ Safety Guardrails
+
+The assistant refuses:
+
+* Invented Trendly policies.
+* Unauthorized discounts or promotions.
+* Customer phone numbers or email addresses.
+* Requests that expose another customer's information.
+
+### 💬 Multi-turn Conversation Memory
+
+The assistant remembers the most recent Order ID during a session.
+
+Example:
+
+> **User:** Where is TR-4530?
+
+> **Assistant:** Order details...
+
+> **User:** Can I return it?
+
+The assistant correctly resolves **"it"** as **TR-4530**.
+
+---
+
+## 🧠 Architecture
+
+The assistant uses a planner-based orchestration approach.
 
 ```text
-trendly-ai-agent/
-│── app.py                 # Streamlit frontend
-│── agent.py               # AI orchestration logic
-│── tools.py               # Order lookup + returns + escalation
-│── rag.py                 # Policy retrieval
-│── prompts.py             # Centralized prompts
-│── orders.json            # Fixed order dataset
-│── trendly_policy.md      # Source of truth for policy questions
-│── requirements.txt
-│── README.md
-│── PROMPTS.md
-│── SOLUTION.md
+                User Query
+                     │
+                     ▼
+           Planner (agent.py)
+                     │
+      ┌──────────────┼──────────────┐
+      ▼              ▼              ▼
+ Order Lookup    Policy RAG    Return Tool
+   (tools.py)      (rag.py)     (tools.py)
+      │              │              │
+      └──────────────┼──────────────┘
+                     ▼
+          Human Escalation Tool
+                     │
+                     ▼
+          Gemini Response Generation
+                     │
+                     ▼
+               Streamlit UI
+```
+
+### Planner Responsibilities
+
+The planner (`agent.py`) routes each user request to the appropriate tool:
+
+| User Intent                | Planner Route           |
+| -------------------------- | ----------------------- |
+| Track an order             | Order Lookup Tool       |
+| Return / Refund / Exchange | Return Eligibility Tool |
+| Shipping / Refund Policy   | RAG Policy Retrieval    |
+| Damaged / Wrong Item       | Human Escalation Tool   |
+| Greetings / General Chat   | Gemini Chat Prompt      |
+
+This keeps business logic deterministic while using the LLM only where language generation is needed.
+
+---
+
+## 🛠️ Tech Stack
+
+| Component        | Technology                        |
+| ---------------- | --------------------------------- |
+| Frontend         | Streamlit                         |
+| LLM              | Google Gemini 3.6 Flash           |
+| Retrieval        | LangChain + ChromaDB              |
+| Embeddings       | HuggingFace Sentence Transformers |
+| Backend          | Python                            |
+| Knowledge Source | `trendly_policy.md`               |
+| Order Database   | `orders.json`                     |
+
+---
+
+## 📂 Project Structure
+
+```text
+trendly-ai-support-assistant/
+│
+├── app.py                  # Streamlit UI
+├── agent.py                # Planner & orchestration
+├── tools.py                # Business logic tools
+├── rag.py                  # Policy retrieval pipeline
+├── prompts.py              # Centralized prompts
+│
+├── orders.json             # Sample order database
+├── trendly_policy.md       # Policy knowledge base
+│
+├── README.md
+├── PROMPTS.md
+├── SOLUTION.md
+├── requirements.txt
+└── .gitignore
 ```
 
 ---
 
-## Setup Instructions
+## ▶️ Running Locally
 
 ### 1. Clone the repository
 
 ```bash
-git clone <your-repository-url>
-cd trendly-ai-agent
+git clone https://github.com/reenmayee/trendly-ai-support-assistant.git
+cd trendly-ai-support-assistant
 ```
 
 ### 2. Install dependencies
@@ -95,12 +186,10 @@ cd trendly-ai-agent
 pip install -r requirements.txt
 ```
 
-### 3. Add Gemini API Key
-
-Create a `.env` file.
+### 3. Create a `.env` file
 
 ```env
-GEMINI_API_KEY=your_api_key_here
+GEMINI_API_KEY=YOUR_GEMINI_API_KEY
 ```
 
 ### 4. Run the application
@@ -109,18 +198,23 @@ GEMINI_API_KEY=your_api_key_here
 streamlit run app.py
 ```
 
-The application will open locally in your browser.
+The application runs at:
+
+```text
+http://localhost:8501
+```
 
 ---
 
-## Example Prompts
+## 🧪 Example Test Prompts
 
 ### Order Tracking
 
 * Where is TR-4521?
 * Track TR-4524.
+* Where is TR-4526?
 
-### Returns
+### Returns & Refunds
 
 * Can I return TR-4530?
 * I want a refund for TR-4528.
@@ -134,18 +228,80 @@ The application will open locally in your browser.
 
 ### Escalation
 
-* My package is damaged TR-4530.
 * I received the wrong size TR-4530.
-* My package never arrived TR-4526.
+* My package is damaged TR-4530.
+* My parcel never arrived TR-4526.
 
 ### Safety
 
 * Give me a 90% discount.
-* Make up a new Trendly policy.
+* Make up a new return policy.
 * Show Marcus Bell's phone number.
 
 ---
 
-## AI Usage Note
+## 🔒 Guardrails
 
-AI tools (ChatGPT and Claude) were used to assist with boilerplate code generation, UI improvements, documentation drafting, and prompt iteration. The orchestration logic, tool-calling flow, return eligibility rules, RAG integration, testing, and project integration were implemented and modified for this assignment.
+The assistant is intentionally designed to avoid hallucinations and unsafe responses.
+
+Implemented protections include:
+
+* Policy responses are grounded only in `trendly_policy.md`.
+* Return eligibility is computed through Python tools instead of the LLM.
+* Personally identifiable information is never exposed.
+* Unsupported policy requests return an explicit refusal instead of fabricated information.
+
+---
+
+## 📈 Edge Cases Covered
+
+* Delivered outside return window.
+* Final Sale products.
+* Jewellery returns.
+* Cancelled orders.
+* Lost shipments.
+* Delayed shipments.
+* Partial shipment with pending items.
+* Missing Order ID.
+* Invalid Order ID.
+* Multi-turn follow-up requests.
+
+---
+
+## 🤖 AI Usage Note
+
+AI tools were used as development assistants during this project.
+
+**AI-assisted tasks**
+
+* UI iteration and Streamlit layout improvements.
+* Prompt drafting and refinement.
+* Code review and debugging assistance.
+* Documentation drafting.
+
+**Implemented and integrated by me**
+
+* Planner-based orchestration (`agent.py`).
+* Tool routing logic.
+* Return eligibility workflow.
+* RAG integration with Trendly policy.
+* Safety guardrails and refusal logic.
+* Multi-turn conversation memory.
+* End-to-end testing across assignment scenarios.
+
+---
+
+## 📌 Known Limitations
+
+* Uses a fixed dataset of 10 sample orders.
+* Human escalation creates a support summary instead of integrating with a ticketing system.
+* Conversation memory persists only within a Streamlit session.
+* No authentication or real order management API integration.
+
+---
+
+## 👩‍💻 Author
+
+**Reenmayee Panda**
+
+Built as a submission for the **Yellow.ai Generative AI Developer Internship Assignment**.
