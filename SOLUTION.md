@@ -1,188 +1,128 @@
-# SOLUTION.md
-
 # Trendly AI Support Assistant — Solution Note
 
 ## Overview
 
-Trendly receives around 2,000 customer support chats daily, most of which involve repetitive workflows such as order tracking, returns, exchanges, refunds, and shipping questions.
+The goal of this project was to build an AI customer support assistant for **Trendly** that can automate repetitive support conversations while safely handing complex issues to a human support team.
 
-This solution uses a lightweight AI orchestration layer that combines deterministic tools with Gemini and RAG instead of relying on keyword matching or a single LLM prompt.
-
----
-
-# Architecture
-
-## High-Level Flow
-
-```text
-Customer
-      │
-      ▼
- Streamlit Chat UI
-      │
-      ▼
-  agent.py (Planner)
-      │
-      ├──────── lookup_order()
-      │
-      ├──────── check_return_eligibility()
-      │
-      ├──────── escalate_to_human()
-      │
-      └──────── search_policy() (RAG)
-                      │
-                      ▼
-              Gemini 3.6 Flash
-                      │
-                      ▼
-               Final Response
-```
+Instead of relying entirely on an LLM, I used a **planner-based architecture** that routes user requests to deterministic Python tools for business logic and uses Gemini only for grounded natural language generation. This improves reliability for workflows like returns, order tracking, and policy questions.
 
 ---
 
-# Components
+## Architecture
 
-## 1. Streamlit Frontend
+The application is divided into four main components:
 
-Provides a conversational interface using Streamlit's chat components.
+### 1. Planner (`agent.py`)
 
-Responsibilities:
+The planner is responsible for identifying the user's intent and deciding which workflow should execute.
 
-* Maintain chat history.
-* Display assistant responses.
-* Send user messages to the planner.
+It routes requests to:
 
----
+* Order Lookup Tool
+* Return / Exchange Eligibility Tool
+* Policy Retrieval (RAG)
+* Human Escalation Tool
+* General Chat (Gemini)
 
-## 2. Planner (agent.py)
+This orchestration keeps business decisions outside the LLM wherever possible.
 
-Acts as the orchestration layer.
+### 2. Business Logic (`tools.py`)
 
-Responsibilities:
+All deterministic workflows are implemented as Python tools.
 
-* Detect customer intent.
-* Decide which tool should run.
-* Maintain short-term conversation memory.
-* Call Gemini only when reasoning or policy explanation is needed.
+Implemented tools include:
 
----
+* Order lookup using `orders.json`.
+* Return and exchange eligibility.
+* Human escalation summary generation.
 
-## 3. Tools
+This ensures policy rules are enforced consistently without depending on model reasoning.
 
-### lookup_order()
+### 3. Retrieval-Augmented Generation (`rag.py`)
 
-Retrieves order information from `orders.json`.
+Policy questions are answered using **RAG** over `trendly_policy.md`.
 
-### check_return_eligibility()
+The assistant retrieves the relevant policy section and passes only that context to Gemini, ensuring responses remain grounded in Trendly's official policy.
 
-Combines:
+### 4. Prompt Layer (`prompts.py`)
 
-* Order status.
-* Delivery date.
-* Final Sale flag.
-* Product category.
-* Trendly return rules.
+Prompts are centralized and separated by responsibility:
 
-### escalate_to_human()
+* `SYSTEM_PROMPT`
+* `POLICY_PROMPT`
+* `CHAT_PROMPT`
 
-Creates a structured escalation summary including:
-
-* Order ID.
-* Customer issue.
-* Current status.
-* Suggested next action.
+This keeps prompt engineering independent from application logic and makes prompts easier to maintain.
 
 ---
 
-## 4. Retrieval-Augmented Generation
+## Key Design Trade-offs
 
-Policy questions use LangChain retrieval over `trendly_policy.md`.
+### Planner + Tools vs LLM-only Reasoning
 
-Benefits:
+I chose to implement order lookup, return eligibility, and escalation as deterministic Python tools rather than asking the LLM to interpret raw order data.
 
-* No hardcoded policy responses.
-* Reduced hallucinations.
-* Single source of truth.
+**Benefit:** predictable decisions, easier debugging, and fewer hallucinations.
 
----
+### RAG for Policy Questions
 
-# Design Decisions
+Instead of hardcoding policy responses, the assistant retrieves information from the provided policy document.
 
-## Why Tool Calling?
+**Benefit:** policy updates only require updating `trendly_policy.md` instead of changing prompts or code.
 
-Order status and return eligibility are deterministic.
+### Human Escalation
 
-Using tools ensures:
+Issues like damaged items, wrong size, and lost shipments are escalated immediately instead of attempting an automated resolution.
 
-* Accurate order information.
-* Correct policy application.
-* No fabricated tracking information.
-
-## Why RAG?
-
-Policies may change independently of application logic.
-
-RAG allows:
-
-* Easy policy updates.
-* Grounded answers.
-* Lower hallucination risk.
-
-## Why Streamlit?
-
-Chosen for simplicity and rapid deployment while still supporting multi-turn conversations and a live public demo.
+**Benefit:** creates a clean handoff between AI automation and human support.
 
 ---
 
-# Edge Cases Handled
+## Safety & Guardrails
 
-* Delayed shipment acknowledgement.
-* Partial shipment explanation.
-* Lost shipment escalation.
-* Cancelled order already refunded.
-* Jewellery non-returnable.
-* Final Sale exchange-only.
-* Return window exceeded.
-* Missing Order ID.
-* Privacy requests refused.
-* Unauthorized discount requests refused.
-* Invented policy requests refused.
+The assistant includes deterministic safety checks before calling Gemini.
 
----
+Implemented protections include:
 
-# Known Limitations
+* Refusing invented Trendly policies.
+* Refusing unauthorized discounts or promotions.
+* Refusing requests for customer phone numbers or email addresses.
+* Using the policy document as the only source of truth for policy-related questions.
 
-* Uses a fixed dataset (`orders.json`) instead of a live database.
-* Human escalation generates a summary rather than creating a real support ticket.
-* Conversation memory is session-based and not persisted across browser refreshes.
-* Authentication is not implemented because it is outside the assignment scope.
+These guardrails reduce hallucinations and prevent sensitive information leakage.
 
 ---
 
-# Trade-offs
+## Known Limitations
 
-| Decision                      | Reason                                    |
-| ----------------------------- | ----------------------------------------- |
-| Tool-first architecture       | Improves reliability over pure prompting. |
-| RAG only for policy questions | Keeps retrieval focused and inexpensive.  |
-| Streamlit frontend            | Faster deployment and easier evaluation.  |
-
----
-
-# Five Discovery Questions for Trendly Operations Team
-
-1. What information is required before creating a real return or exchange request?
-2. Which order statuses should automatically escalate instead of remaining AI-handled?
-3. Should VIP customers receive different refund or escalation workflows?
-4. What SLA should the assistant communicate for damaged or lost parcel escalations?
-5. Should exchange inventory availability be checked before approving an exchange?
+* The project uses the provided sample dataset (`orders.json`) instead of a live order management system.
+* Conversation memory is session-based within Streamlit and does not persist across user sessions.
+* Human escalation generates a structured summary but is not connected to a real ticketing platform.
+* The assistant supports English only.
 
 ---
 
-# Future Improvements
+## Discovery Questions for Trendly's Operations Team
 
-* Connect to a live order database.
-* Create real support tickets through a CRM API.
-* Add customer authentication before exposing order information.
-* Add shipment tracking API integration.
-* Persist conversation history across sessions.
+Before building this for production, I would ask:
+
+1. Which customer issues must always be escalated instead of being handled automatically?
+2. Are there exceptions to the standard return policy for premium customers or promotional campaigns?
+3. Which ticketing or CRM platform should escalation integrate with (Zendesk, Freshdesk, Salesforce, etc.)?
+4. Should conversation history persist across customer accounts instead of only the current session?
+5. What customer support metrics (resolution rate, escalation rate, CSAT, response time) should the assistant optimize for?
+
+---
+
+## Testing Summary
+
+The assistant was tested across the core scenarios described in the assignment:
+
+* Order lookup across different order statuses.
+* Return, refund, and exchange eligibility.
+* Policy questions grounded using RAG.
+* Human escalation scenarios.
+* Multi-turn follow-up conversations.
+* Safety and refusal cases to verify hallucination prevention.
+
+This implementation focuses on reliable orchestration, grounded responses, and clear separation between business logic and LLM-generated language.
