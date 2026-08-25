@@ -6,23 +6,20 @@ from google import genai
 from tools import (
     lookup_order,
     check_return_eligibility,
-    escalate_to_human
+    escalate_to_human,
 )
 
 from rag import search_policy
-
-# ALL prompts come from prompts.py
 from prompts import (
     POLICY_PROMPT,
     CHAT_PROMPT,
-    ESCALATION_PROMPT
+    ESCALATION_PROMPT,
 )
 
 # ---------------- CONFIG ----------------
 load_dotenv()
 
 client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
-
 
 # ---------------- HELPERS ----------------
 def extract_order_id(text):
@@ -52,14 +49,16 @@ def get_ai_response(user_message, memory=None, conversation_state=None):
             "active_order": None,
             "customer": None,
             "intent": None,
-            "eligibility": None
+            "eligibility": None,
         }
 
     memory["logs"] = []
 
     message = user_message.lower()
 
-    # Deterministic greeting
+    # ======================================================
+    # GREETING
+    # ======================================================
     greetings = ["hi", "hello", "hey", "hola", "good morning", "good evening"]
 
     if message.strip() in greetings:
@@ -75,7 +74,6 @@ def get_ai_response(user_message, memory=None, conversation_state=None):
             "- 👤 Escalating support issues"
         )
 
-    # Empty or meaningless input
     if not message.strip():
         return "Please tell me how I can help you with your Trendly order or policy question."
 
@@ -83,7 +81,7 @@ def get_ai_response(user_message, memory=None, conversation_state=None):
         return "I didn't understand that. Could you rephrase your question?"
 
     # ======================================================
-    # SAFETY GUARDRAILS
+    # SAFETY
     # ======================================================
     blocked_keywords = [
         "discount",
@@ -95,7 +93,7 @@ def get_ai_response(user_message, memory=None, conversation_state=None):
         "phone number",
         "email address",
         "customer phone",
-        "customer email"
+        "customer email",
     ]
 
     if any(word in message for word in blocked_keywords):
@@ -122,12 +120,13 @@ def get_ai_response(user_message, memory=None, conversation_state=None):
     order_id = get_active_order(memory, conversation_state, order_id)
 
     # ======================================================
-    # RETURN / EXCHANGE FOLLOW-UP
+    # RETURN FOLLOW-UP
     # ======================================================
     if (
         ("return it" in message or "exchange it" in message or "refund it" in message)
         and order_id
     ):
+
         conversation_state["intent"] = "return_request"
         memory["logs"].append("Planner → Return Eligibility Tool")
 
@@ -169,7 +168,7 @@ def get_ai_response(user_message, memory=None, conversation_state=None):
 """
 
     # ======================================================
-    # RETURN / EXCHANGE TOOL
+    # RETURN / EXCHANGE
     # ======================================================
     if any(word in message for word in ["return", "exchange", "refund"]):
 
@@ -179,8 +178,8 @@ def get_ai_response(user_message, memory=None, conversation_state=None):
                 "so I can check your eligibility."
             )
 
-        memory["logs"].append("Planner → Return Eligibility Tool")
         conversation_state["intent"] = "return_request"
+        memory["logs"].append("Planner → Return Eligibility Tool")
 
         result = check_return_eligibility(order_id)
         conversation_state["eligibility"] = result["eligible"]
@@ -193,11 +192,9 @@ def get_ai_response(user_message, memory=None, conversation_state=None):
 
 **Item:** {result["item"]}
 
-**Why you're eligible**
-
 - Delivered {result["days_since_delivery"]} days ago.
-- Return window: **30 days**.
-- Remaining window: **{result["days_remaining"]} days**.
+- Return window: **30 days**
+- Days remaining: **{result["days_remaining"]}**
 
 {result["message"]}
 
@@ -222,7 +219,7 @@ You'll receive return instructions shortly.
 """
 
     # ======================================================
-    # HUMAN ESCALATION TOOL
+    # ESCALATION
     # ======================================================
     escalation_keywords = [
         "damaged",
@@ -243,30 +240,28 @@ You'll receive return instructions shortly.
         "never received",
         "payment failed",
         "payment issue",
-        "fraud"
+        "fraud",
     ]
 
     if any(word in message for word in escalation_keywords):
 
         if not order_id:
-            return (
-                "Please share your Order ID so I can investigate and escalate this issue."
-            )
+            return "Please share your Order ID so I can investigate and escalate this issue."
 
-        memory["logs"].append("Planner → Human Escalation Tool")
         conversation_state["intent"] = "human_escalation"
+        memory["logs"].append("Planner → Human Escalation Tool")
 
         summary = escalate_to_human(order_id, user_message)
 
         prompt = ESCALATION_PROMPT.format(
             order_id=order_id,
             issue=user_message,
-            summary=summary
+            summary=summary,
         )
 
         response = client.models.generate_content(
             model="gemini-3.6-flash",
-            contents=prompt
+            contents=prompt,
         )
 
         return f"""
@@ -297,8 +292,8 @@ A Trendly support specialist will review your request within **24 hours**.
         if not order_id:
             return "Please provide your Order ID so I can check your cancellation request."
 
-        memory["logs"].append("Planner → Cancellation Tool")
         conversation_state["intent"] = "cancel_order"
+        memory["logs"].append("Planner → Cancellation Tool")
 
         order = lookup_order(order_id)
 
@@ -325,7 +320,7 @@ No further action is required.
         return f"""
 ## Cancellation Request
 
-**Order Status:** {order['status'].replace('_', ' ').title()}
+**Order Status:** {order["status"].replace("_", " ").title()}
 
 Your order has not been delivered yet.
 
@@ -333,12 +328,12 @@ Please contact Trendly support if you'd like to cancel before shipment.
 """
 
     # ======================================================
-    # ORDER LOOKUP TOOL
+    # ORDER LOOKUP
     # ======================================================
     if order_id:
 
-        memory["logs"].append("Planner → Order Lookup Tool")
         conversation_state["intent"] = "order_lookup"
+        memory["logs"].append("Planner → Order Lookup Tool")
 
         order = lookup_order(order_id)
 
@@ -350,18 +345,14 @@ Please contact Trendly support if you'd like to cancel before shipment.
             )
 
         conversation_state["customer"] = order["customer_name"]
+        conversation_state["active_order"] = order["order_id"]
 
         memory["logs"].append(f"Order Retrieved: {order['order_id']}")
         memory["logs"].append(
             f"Status: {order['status'].replace('_', ' ').title()}"
         )
 
-        conversation_state["active_order"] = order["order_id"]
-        conversation_state["intent"] = "order_lookup"
-
         status = order["status"].replace("_", " ").title()
-        memory["last_order_id"] = order["order_id"]
-
         extra_message = ""
 
         if order["status"] == "delayed":
@@ -371,11 +362,8 @@ Please contact Trendly support if you'd like to cancel before shipment.
             )
 
         elif order["status"] == "partially_shipped":
-
             shipped = [
-                item["name"]
-                for item in order["items"]
-                if item.get("shipped")
+                item["name"] for item in order["items"] if item.get("shipped")
             ]
 
             pending = [
@@ -423,7 +411,7 @@ Please contact Trendly support if you'd like to cancel before shipment.
 """
 
     # ======================================================
-    # POLICY QUESTIONS (RAG ONLY)
+    # POLICY QUESTIONS (RAG)
     # ======================================================
     policy_keywords = [
         "shipping policy",
@@ -436,17 +424,17 @@ Please contact Trendly support if you'd like to cancel before shipment.
         "delivery",
         "policy",
         "jewellery",
-        "jewelry"
+        "jewelry",
     ]
 
     if any(word in message for word in policy_keywords):
 
-        memory["logs"].append("Planner → Policy Retrieval (RAG)")
         conversation_state["intent"] = "policy_question"
+        memory["logs"].append("Planner → Policy Retrieval (RAG)")
 
         policy_context = search_policy(user_message)
 
-        if not policy_context or policy_context.strip() == "":
+        if not policy_context.strip():
             return (
                 "I couldn't find this information in Trendly's official "
                 "policy document, so I can't provide an answer."
@@ -454,15 +442,14 @@ Please contact Trendly support if you'd like to cancel before shipment.
 
         prompt = POLICY_PROMPT.format(
             policy_context=policy_context,
-            user_question=user_message
+            user_question=user_message,
         )
 
         response = client.models.generate_content(
             model="gemini-3.6-flash",
-            contents=prompt
+            contents=prompt,
         )
 
-        # Prevent None responses from Gemini
         policy_answer = (
             response.text.strip()
             if response and response.text
@@ -474,3 +461,24 @@ Please contact Trendly support if you'd like to cancel before shipment.
 ---
 📚 **Source:** Trendly Policy Document
 """
+
+    # ======================================================
+    # GENERAL CHAT
+    # ======================================================
+    conversation_state["intent"] = "general_chat"
+    memory["logs"].append("Planner → General Gemini Chat")
+
+    prompt = CHAT_PROMPT.format(
+        chat_history=str(memory),
+        user_message=user_message,
+    )
+
+    response = client.models.generate_content(
+        model="gemini-3.6-flash",
+        contents=prompt,
+    )
+
+    if response and response.text:
+        return response.text
+
+    return "Sorry, I couldn't generate a response. Please try asking again."
