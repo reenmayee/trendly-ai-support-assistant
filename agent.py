@@ -462,7 +462,14 @@ Please contact Trendly support if you'd like to cancel before shipment.
             contents=prompt
         )
 
-        return f"""{response.text}
+        # Prevent None responses from Gemini
+        policy_answer = (
+            response.text.strip()
+            if response and response.text
+            else "I couldn't generate a response using Trendly's official policy document."
+        )
+
+        return f"""{policy_answer}
 
 ---
 📚 **Source:** Trendly Policy Document
