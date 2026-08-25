@@ -8,7 +8,9 @@ st.set_page_config(
 )
 
 st.title("🛍️ Trendly AI Support Assistant")
-st.caption("Your AI-powered customer support agent for orders, returns, exchanges and policy questions.")
+st.caption(
+    "Your AI-powered customer support agent for orders, returns, exchanges and policy questions."
+)
 
 # ---------------- Session State ----------------
 if "messages" not in st.session_state:
@@ -69,7 +71,8 @@ with st.sidebar:
 
     if st.session_state.conversation_state["active_order"]:
         st.info(
-            f"**Active Order:** {st.session_state.conversation_state['active_order']}"
+            f"**Active Order:** "
+            f"{st.session_state.conversation_state['active_order']}"
         )
 
     if st.session_state.conversation_state["intent"]:
@@ -114,8 +117,16 @@ if user_input:
             st.session_state.memory,
             st.session_state.conversation_state
         )
-        # Update sidebar logs from agent memory
-        st.session_state.logs = st.session_state.memory.get("logs", [])
+
+    # Prevent None responses from crashing Streamlit
+    if response is None:
+        response = (
+            "Sorry, I couldn't process that request. "
+            "Please try again or provide a valid Trendly Order ID."
+        )
+
+    # Update sidebar logs from agent memory
+    st.session_state.logs = st.session_state.memory.get("logs", [])
 
     # Save assistant response
     st.session_state.messages.append({
@@ -134,7 +145,10 @@ if user_input:
             "policy"
         ]
 
-        if any(word in user_input.lower() for word in policy_keywords):
+        if any(
+            word in user_input.lower()
+            for word in policy_keywords
+        ):
             st.markdown("""
             <div style="
                 background:#F4EDFF;
@@ -150,7 +164,7 @@ if user_input:
             """, unsafe_allow_html=True)
 
         # Escalation ticket styling
-        if "ESC-" in response:
+        if response and "ESC-" in response:
             st.markdown(f"""
             <div style="
                 background:#FFF7ED;
