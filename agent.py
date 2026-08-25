@@ -8,12 +8,14 @@ from tools import (
     check_return_eligibility,
     escalate_to_human
 )
+
 from rag import search_policy
 
+# ALL prompts come from prompts.py
 from prompts import (
-    SYSTEM_PROMPT,
     POLICY_PROMPT,
-    CHAT_PROMPT
+    CHAT_PROMPT,
+    ESCALATION_PROMPT
 )
 
 # ---------------- CONFIG ----------------
@@ -22,194 +24,226 @@ load_dotenv()
 client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
 
-def get_ai_response(user_message, chat_history=None):
-    """Main planner for Trendly AI Support Assistant."""
+# ---------------- HELPERS ----------------
+def extract_order_id(text):
+    match = re.search(r"TR-\d{4}", text.upper())
+    return match.group() if match else None
 
-    # ---------------- MEMORY ----------------
-    if chat_history is None:
-        chat_history = {}
 
-    # Planner logs (for orchestration/debugging)
-    chat_history["logs"] = []
+def get_active_order(memory, conversation_state, order_id):
+    """Reuse previous order during multi-turn conversation."""
+    if order_id:
+        return order_id
+
+    if conversation_state.get("active_order"):
+        return conversation_state["active_order"]
+
+    return memory.get("last_order_id")
+
+
+# ---------------- MAIN AGENT ----------------
+def get_ai_response(user_message, memory=None, conversation_state=None):
+
+    if memory is None:
+        memory = {}
+
+    if conversation_state is None:
+        conversation_state = {
+            "active_order": None,
+            "customer": None,
+            "intent": None,
+            "eligibility": None
+        }
+
+    memory["logs"] = []
 
     message = user_message.lower()
 
-    # ---------------- SAFETY GUARDRAILS ----------------
-    if "make up" in message or "invent" in message:
+    # Deterministic greeting
+    greetings = ["hi", "hello", "hey", "hola", "good morning", "good evening"]
+
+    if message.strip() in greetings:
+        memory["logs"].append("Planner → Greeting")
+        conversation_state["intent"] = "greeting"
+
         return (
-            "❌ I can't invent or modify Trendly policies. "
-            "I can only answer using Trendly's official policy document."
+            "Hello! 👋 Welcome to Trendly Support.\n\n"
+            "I can help you with:\n"
+            "- 📦 Order tracking\n"
+            "- ↩️ Returns, exchanges and refunds\n"
+            "- 📜 Shipping and refund policies\n"
+            "- 👤 Escalating support issues"
         )
 
-    if "discount" in message or "90%" in message:
-        return (
-            "I'm sorry, but I can't provide unauthorized discounts. "
-            "I can help with orders, returns, exchanges, refunds, and shipping policies."
-        )
+    # Empty or meaningless input
+    if not message.strip():
+        return "Please tell me how I can help you with your Trendly order or policy question."
 
-    private_keywords = [
+    if len(message) <= 2 and message not in ["hi", "ok", "no"]:
+        return "I didn't understand that. Could you rephrase your question?"
+
+    # ======================================================
+    # SAFETY GUARDRAILS
+    # ======================================================
+    blocked_keywords = [
+        "discount",
+        "coupon",
+        "promo code",
+        "other customer's order",
+        "show all orders",
+        "internal data",
         "phone number",
         "email address",
         "customer phone",
-        "customer email",
-        "marcus bell phone",
-        "ananya rao phone",
-        "priya nair phone",
-        "diego ramos phone"
+        "customer email"
     ]
 
-    if any(word in message for word in private_keywords):
-        return "🔒 I can't share another customer's personal information."
-
-    # ---------------- ORDER ID EXTRACTION ----------------
-    match = re.search(r"TR-\d{4}", user_message.upper())
-
-    order_id = None
-    if match:
-        order_id = match.group()
-        chat_history["last_order_id"] = order_id
-
-    # ============================================================
-    # PLANNER ROUTE 1 — FOLLOW-UP MEMORY
-    # ============================================================
-    if ("return it" in message or "exchange it" in message) and not order_id:
-
-        last_order = chat_history.get("last_order_id")
-
-        if not last_order:
-            return "Please provide your Order ID first."
-
-        chat_history["logs"].append("Planner → Return Eligibility Tool")
-
-        result = check_return_eligibility(last_order)
-
-        if result["eligible"] is True:
-            return f"""
-## Return Request Approved ✅
-
-**Order ID:** {last_order}
-
-**Item:** {result["item"]}
-
-{result["message"]}
-
-You'll receive return instructions shortly.
-"""
-
-        elif result["eligible"] == "exchange_only":
-            return f"""
-## Exchange Available ✅
-
-**Order ID:** {last_order}
-
-{result["message"]}
-
-If you'd like to exchange this item, our support team will guide you through the process.
-"""
-
-        else:
-            return f"""
-## Return Request Not Approved ❌
-
-{result["message"]}
-"""
-
-    # ============================================================
-    # PLANNER ROUTE 2 — POLICY QUESTIONS (NO ORDER REQUIRED)
-    # ============================================================
-    policy_only_questions = [
-        "return policy",
-        "refund policy",
-        "shipping policy",
-        "exchange policy",
-        "can i return jewellery",
-        "can i return jewelry",
-        "can i exchange jewellery",
-        "can i exchange jewelry"
-    ]
-
-    if any(q in message for q in policy_only_questions):
-
-        chat_history["logs"].append("Planner → Policy Retrieval (RAG)")
-
-        policy_context = search_policy(user_message)
-
-        prompt = POLICY_PROMPT.format(
-            system_prompt=SYSTEM_PROMPT,
-            policy_context=policy_context,
-            user_question=user_message
+    if any(word in message for word in blocked_keywords):
+        return (
+            "🔒 I can't provide unauthorized discounts, internal company "
+            "information, or another customer's personal data."
         )
 
-        response = client.models.generate_content(
-            model="gemini-3.6-flash",
-            contents=prompt
+    if "invent" in message or "make up" in message:
+        return (
+            "I can only answer using Trendly's official policy document "
+            "and available order information."
         )
 
-        return response.text
+    # ======================================================
+    # ORDER MEMORY
+    # ======================================================
+    order_id = extract_order_id(user_message)
 
-    # ============================================================
-    # PLANNER ROUTE 3 — RETURN / EXCHANGE / REFUND TOOL
-    # ============================================================
-    return_keywords = ["return", "exchange", "refund"]
+    if order_id:
+        memory["last_order_id"] = order_id
+        conversation_state["active_order"] = order_id
 
-    if any(word in message for word in return_keywords):
+    order_id = get_active_order(memory, conversation_state, order_id)
 
-        if not order_id:
-            return (
-                "Please provide your Order ID "
-                "(for example: TR-4530) so I can check eligibility."
-            )
-
-        chat_history["logs"].append("Planner → Return Eligibility Tool")
+    # ======================================================
+    # RETURN / EXCHANGE FOLLOW-UP
+    # ======================================================
+    if (
+        ("return it" in message or "exchange it" in message or "refund it" in message)
+        and order_id
+    ):
+        conversation_state["intent"] = "return_request"
+        memory["logs"].append("Planner → Return Eligibility Tool")
 
         result = check_return_eligibility(order_id)
+        conversation_state["eligibility"] = result["eligible"]
 
         if result["eligible"] is True:
             return f"""
-## Return Request Approved ✅
+## ✅ Return Eligible
 
-**Order ID:** {result["order_id"]}
+**Order ID:** {order_id}
 
 **Item:** {result["item"]}
 
-{result["message"]}
+**Eligibility Reason**
 
-You'll receive return instructions shortly.
+- Delivered {result["days_since_delivery"]} days ago.
+- Trendly return window: **30 days**.
+- Days remaining: **{result["days_remaining"]}**.
+
+{result["message"]}
 """
 
         elif result["eligible"] == "exchange_only":
             return f"""
-## Exchange Available ✅
+## 🔄 Exchange Available
 
 **Order ID:** {order_id}
 
 {result["message"]}
-
-This item isn't eligible for a refund, but it **can be exchanged** according to Trendly's policy.
 """
 
-        else:
-            return f"""
-## Return / Refund Request Not Approved ❌
+        return f"""
+## ❌ Return Not Eligible
+
+**Order ID:** {order_id}
 
 {result["message"]}
 """
 
-    # ============================================================
-    # PLANNER ROUTE 4 — HUMAN ESCALATION TOOL
-    # ============================================================
+    # ======================================================
+    # RETURN / EXCHANGE TOOL
+    # ======================================================
+    if any(word in message for word in ["return", "exchange", "refund"]):
+
+        if not order_id:
+            return (
+                "Please provide your Order ID (for example: TR-4530) "
+                "so I can check your eligibility."
+            )
+
+        memory["logs"].append("Planner → Return Eligibility Tool")
+        conversation_state["intent"] = "return_request"
+
+        result = check_return_eligibility(order_id)
+        conversation_state["eligibility"] = result["eligible"]
+
+        if result["eligible"] is True:
+            return f"""
+## ✅ Return Request Approved
+
+**Order ID:** {order_id}
+
+**Item:** {result["item"]}
+
+**Why you're eligible**
+
+- Delivered {result["days_since_delivery"]} days ago.
+- Return window: **30 days**.
+- Remaining window: **{result["days_remaining"]} days**.
+
+{result["message"]}
+
+You'll receive return instructions shortly.
+"""
+
+        elif result["eligible"] == "exchange_only":
+            return f"""
+## 🔄 Exchange Available
+
+**Order ID:** {order_id}
+
+{result["message"]}
+"""
+
+        return f"""
+## ❌ Return / Refund Not Approved
+
+**Order ID:** {order_id}
+
+{result["message"]}
+"""
+
+    # ======================================================
+    # HUMAN ESCALATION TOOL
+    # ======================================================
     escalation_keywords = [
         "damaged",
         "wrong item",
         "wrong size",
-        "received wrong size",
-        "received wrong item",
         "defective",
         "lost",
+        "lost package",
+        "lost shipment",
         "missing package",
         "missing parcel",
+        "missing delivery",
+        "package missing",
         "package not arrived",
-        "not delivered"
+        "didn't receive",
+        "did not receive",
+        "not received",
+        "never received",
+        "payment failed",
+        "payment issue",
+        "fraud"
     ]
 
     if any(word in message for word in escalation_keywords):
@@ -219,41 +253,52 @@ This item isn't eligible for a refund, but it **can be exchanged** according to 
                 "Please share your Order ID so I can investigate and escalate this issue."
             )
 
-        chat_history["logs"].append("Planner → Human Escalation Tool")
+        memory["logs"].append("Planner → Human Escalation Tool")
+        conversation_state["intent"] = "human_escalation"
 
         summary = escalate_to_human(order_id, user_message)
 
+        prompt = ESCALATION_PROMPT.format(
+            order_id=order_id,
+            issue=user_message,
+            summary=summary
+        )
+
+        response = client.models.generate_content(
+            model="gemini-3.6-flash",
+            contents=prompt
+        )
+
         return f"""
-## Escalated to Human Support 🚨
+## 🚨 Escalated to Human Support
 
-I'm sorry you're facing this issue.
+**Ticket ID:** ESC-{order_id[-4:]}
 
-Your request has been forwarded to a human support specialist.
-
-### Support Ticket
+**Priority:** High
 
 **Order ID:** {order_id}
 
-**Issue:** {user_message}
-
 **Status:** Escalated
 
-**Next Step:** A support specialist will review your request within **24 hours**.
+---
 
-### Internal Summary
+### Human Agent Summary
 
-{summary}
+{response.text}
+
+A Trendly support specialist will review your request within **24 hours**.
 """
 
-    # ============================================================
-    # PLANNER ROUTE 5 — CANCELLATION
-    # ============================================================
+    # ======================================================
+    # ORDER CANCELLATION
+    # ======================================================
     if "cancel" in message:
 
         if not order_id:
             return "Please provide your Order ID so I can check your cancellation request."
 
-        chat_history["logs"].append("Planner → Cancellation Check")
+        memory["logs"].append("Planner → Cancellation Tool")
+        conversation_state["intent"] = "cancel_order"
 
         order = lookup_order(order_id)
 
@@ -262,11 +307,9 @@ Your request has been forwarded to a human support specialist.
 
         if order["status"] == "cancelled":
             return f"""
-## Order Already Cancelled ✅
+## ✅ Order Already Cancelled
 
 **Order ID:** {order_id}
-
-Your order has already been cancelled.
 
 **Refund Status:** {order.get("refund_status", "Processed")}
 
@@ -275,70 +318,94 @@ No further action is required.
 
         if order["status"] == "delivered":
             return (
-                "This order has already been delivered, so it can't be cancelled. "
-                "If it's eligible, I can help you request a return or exchange instead."
+                "This order has already been delivered, so it cannot be cancelled. "
+                "If eligible, I can help you start a return or exchange instead."
             )
 
-        return (
-            f"Your order is currently **{order['status'].replace('_', ' ').title()}**.\n\n"
-            "Please contact support if you'd like to cancel it before shipment."
-        )
+        return f"""
+## Cancellation Request
 
-    # ============================================================
-    # PLANNER ROUTE 6 — ORDER LOOKUP TOOL
-    # ============================================================
+**Order Status:** {order['status'].replace('_', ' ').title()}
+
+Your order has not been delivered yet.
+
+Please contact Trendly support if you'd like to cancel before shipment.
+"""
+
+    # ======================================================
+    # ORDER LOOKUP TOOL
+    # ======================================================
     if order_id:
 
-        chat_history["logs"].append("Planner → Order Lookup Tool")
+        memory["logs"].append("Planner → Order Lookup Tool")
+        conversation_state["intent"] = "order_lookup"
 
         order = lookup_order(order_id)
 
         if not order:
-            return "❌ I couldn't find an order with that Order ID."
+            return (
+                "❌ I couldn't find an order with that Order ID.\n\n"
+                "Please check the Order ID and try again.\n"
+                "Trendly Order IDs look like **TR-4521**."
+            )
+
+        conversation_state["customer"] = order["customer_name"]
+
+        memory["logs"].append(f"Order Retrieved: {order['order_id']}")
+        memory["logs"].append(
+            f"Status: {order['status'].replace('_', ' ').title()}"
+        )
+
+        conversation_state["active_order"] = order["order_id"]
+        conversation_state["intent"] = "order_lookup"
 
         status = order["status"].replace("_", " ").title()
+        memory["last_order_id"] = order["order_id"]
 
         extra_message = ""
 
         if order["status"] == "delayed":
             extra_message = (
-                "\n\n⚠️ We're sorry your shipment is delayed. "
-                "Our logistics team is actively monitoring it."
+                "⚠️ Your shipment is delayed. "
+                "Our logistics team is monitoring it."
             )
 
         elif order["status"] == "partially_shipped":
 
-            shipped_items = []
-            pending_items = []
+            shipped = [
+                item["name"]
+                for item in order["items"]
+                if item.get("shipped")
+            ]
 
-            for item in order["items"]:
-                if item.get("shipped"):
-                    shipped_items.append(item["name"])
-                else:
-                    pending_items.append(
-                        f"{item['name']} (ETA: {item.get('backorder_eta', 'TBD')})"
-                    )
+            pending = [
+                f"{item['name']} (ETA: {item.get('backorder_eta', 'TBD')})"
+                for item in order["items"]
+                if not item.get("shipped")
+            ]
 
             extra_message = (
-                f"\n\n**Items Shipped:** {', '.join(shipped_items)}"
-                f"\n\n**Items Pending:** {', '.join(pending_items)}"
+                f"**Items Shipped:** {', '.join(shipped)}\n\n"
+                f"**Items Pending:** {', '.join(pending)}"
             )
 
         elif order["status"] == "lost_in_transit":
             extra_message = (
-                "\n\n🚨 This shipment has been marked as **Lost in Transit**. "
-                "I'll help escalate this issue to our support team."
+                "🚨 This shipment has been marked as Lost in Transit. "
+                "I'll help escalate this issue if needed."
             )
 
         elif order["status"] == "cancelled":
             extra_message = (
-                f"\n\n**Refund Status:** {order.get('refund_status', 'Processed')}"
+                f"**Refund Status:** {order.get('refund_status', 'Processed')}"
             )
 
         return f"""
-## Order Status 📦
+## 📦 Order Status
 
 **Order ID:** {order["order_id"]}
+
+**Customer:** {order["customer_name"]}
 
 **Status:** {status}
 
@@ -350,31 +417,42 @@ No further action is required.
 
 **Shipping City:** {order["shipping_city"]}
 
+---
+
 {extra_message}
 """
 
-    # ============================================================
-    # PLANNER ROUTE 7 — GENERAL POLICY QUESTIONS (RAG)
-    # ============================================================
+    # ======================================================
+    # POLICY QUESTIONS (RAG ONLY)
+    # ======================================================
     policy_keywords = [
+        "shipping policy",
+        "return policy",
+        "refund policy",
+        "exchange policy",
         "shipping",
         "refund",
-        "refunds",
-        "return policy",
         "returns",
-        "exchange policy",
         "delivery",
-        "policy"
+        "policy",
+        "jewellery",
+        "jewelry"
     ]
 
     if any(word in message for word in policy_keywords):
 
-        chat_history["logs"].append("Planner → Policy Retrieval (RAG)")
+        memory["logs"].append("Planner → Policy Retrieval (RAG)")
+        conversation_state["intent"] = "policy_question"
 
         policy_context = search_policy(user_message)
 
+        if not policy_context or policy_context.strip() == "":
+            return (
+                "I couldn't find this information in Trendly's official "
+                "policy document, so I can't provide an answer."
+            )
+
         prompt = POLICY_PROMPT.format(
-            system_prompt=SYSTEM_PROMPT,
             policy_context=policy_context,
             user_question=user_message
         )
@@ -384,22 +462,8 @@ No further action is required.
             contents=prompt
         )
 
-        return response.text
+        return f"""{response.text}
 
-    # ============================================================
-    # PLANNER ROUTE 8 — GENERAL GEMINI CHAT
-    # ============================================================
-    chat_history["logs"].append("Planner → General Gemini Chat")
-
-    prompt = CHAT_PROMPT.format(
-        system_prompt=SYSTEM_PROMPT,
-        chat_history=str(chat_history),
-        user_message=user_message
-    )
-
-    response = client.models.generate_content(
-        model="gemini-3.6-flash",
-        contents=prompt
-    )
-
-    return response.text
+---
+📚 **Source:** Trendly Policy Document
+"""
