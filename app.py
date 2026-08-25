@@ -10,6 +10,25 @@ st.set_page_config(
 st.title("🛍️ Trendly AI Support Assistant")
 st.caption("Your AI-powered customer support agent for orders, returns, exchanges and policy questions.")
 
+# ---------------- Session State ----------------
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+
+if "memory" not in st.session_state:
+    st.session_state.memory = {}
+
+# NEW: Multi-turn conversation memory
+if "conversation_state" not in st.session_state:
+    st.session_state.conversation_state = {
+        "active_order": None,
+        "customer": None,
+        "intent": None,
+        "eligibility": None
+    }
+
+if "logs" not in st.session_state:
+    st.session_state.logs = []
+
 # ---------------- Sidebar ----------------
 with st.sidebar:
     st.header("🛍️ Trendly AI Assistant")
@@ -32,34 +51,54 @@ with st.sidebar:
     **🚨 Escalation**
     - My package is damaged TR-4530.
     """)
+
     if st.button("🗑️ Clear Chat"):
         st.session_state.messages = []
         st.session_state.memory = {}
+        st.session_state.conversation_state = {
+            "active_order": None,
+            "customer": None,
+            "intent": None,
+            "eligibility": None
+        }
+        st.session_state.logs = []
         st.rerun()
 
+    st.markdown("---")
+    st.markdown("### Current Conversation")
+
+    if st.session_state.conversation_state["active_order"]:
+        st.info(
+            f"**Active Order:** {st.session_state.conversation_state['active_order']}"
+        )
+
+    if st.session_state.conversation_state["intent"]:
+        st.success(
+            f"**Intent:** {st.session_state.conversation_state['intent']}"
+        )
+
+    st.markdown("---")
     st.markdown("### Agent Activity")
-    if "logs" in st.session_state:
-        for log in st.session_state.logs:
+
+    if st.session_state.logs:
+        for log in st.session_state.logs[-5:]:
             st.success(log)
+    else:
+        st.caption("No tools executed yet.")
 
-# Chat history (only for UI)
-if "messages" not in st.session_state:
-    st.session_state.messages = []
-
-# Memory (only for agent state)
-if "memory" not in st.session_state:
-    st.session_state.memory = {}
-
-# Display previous chat messages
+# ---------------- Display Chat ----------------
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
-# Chat input
-user_input = st.chat_input("Ask me about your order, refund, or Trendly policy...")
+# ---------------- Chat Input ----------------
+user_input = st.chat_input(
+    "Ask me about your order, refund, or Trendly policy..."
+)
 
 if user_input:
-    # Show user message
+
+    # Save user message
     st.session_state.messages.append({
         "role": "user",
         "content": user_input
@@ -68,9 +107,15 @@ if user_input:
     with st.chat_message("user"):
         st.markdown(user_input)
 
-    # Send MEMORY to the agent (not messages)
-    with st.spinner("Checking your request..."):
-        response = get_ai_response(user_input, st.session_state.memory)
+    # Spinner while tools run
+    with st.spinner("Checking your request against Trendly orders and policy..."):
+        response = get_ai_response(
+            user_input,
+            st.session_state.memory,
+            st.session_state.conversation_state
+        )
+        # Update sidebar logs from agent memory
+        st.session_state.logs = st.session_state.memory.get("logs", [])
 
     # Save assistant response
     st.session_state.messages.append({
@@ -80,19 +125,45 @@ if user_input:
 
     with st.chat_message("assistant"):
 
-        # Show badge only for policy/RAG answers
-        policy_keywords = ["refund", "shipping", "return policy", "exchange policy", "policy"]
+        # Policy grounded badge
+        policy_keywords = [
+            "refund",
+            "shipping",
+            "return policy",
+            "exchange policy",
+            "policy"
+        ]
 
         if any(word in user_input.lower() for word in policy_keywords):
             st.markdown("""
             <div style="
                 background:#F4EDFF;
-                border-left:4px solid #A78BFA;
+                border-left:4px solid #8B5CF6;
                 padding:12px;
                 border-radius:10px;
                 margin-bottom:12px;">
-                <b>📚 Policy Grounded</b><br>
-                <span style="color:#666;">Source: trendly_policy.md</span>
+                <b>📚 Policy Grounded Response</b><br>
+                <span style="color:#555;">
+                Source: trendly_policy.md (official Trendly policy)
+                </span>
+            </div>
+            """, unsafe_allow_html=True)
+
+        # Escalation ticket styling
+        if "ESC-" in response:
+            st.markdown(f"""
+            <div style="
+                background:#FFF7ED;
+                border:1px solid #FB923C;
+                padding:15px;
+                border-radius:12px;
+                margin-bottom:15px;">
+                <h4 style="color:#EA580C;margin:0;">
+                    👤 Escalated to Human Support
+                </h4>
+                <p style="margin-top:8px;">
+                    A support ticket has been created for this request.
+                </p>
             </div>
             """, unsafe_allow_html=True)
 
