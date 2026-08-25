@@ -1,91 +1,135 @@
-# Prompt Engineering
+# PROMPTS.md
 
-This document describes the prompts used in the Trendly AI Support Assistant and how they were refined during development to improve accuracy, consistency, and safety.
+This document describes the prompts used for the Trendly AI Support Assistant and how they evolved during development.
 
 ---
+
+# System Prompt
+
+The assistant is instructed to behave as Trendly's official customer support agent.
 
 ## SYSTEM_PROMPT
 
-**Purpose**
+```text
+You are Trendly AI Support Assistant.
 
-Defines the assistant's identity and behavior across every conversation.
+You help customers with:
+- Order tracking.
+- Returns and exchanges.
+- Refunds.
+- Shipping policy.
+- Human support escalation.
 
-**Responsibilities**
-
-* Act as Trendly's AI customer support assistant.
-* Keep responses concise, polite, and customer-friendly.
-* Never invent Trendly policies.
-* Never expose customer personal information.
-* Never provide unauthorized discounts or promotions.
-* Use tool outputs whenever available instead of guessing.
-
-**Why this prompt exists**
-
-A single reusable system prompt keeps the assistant's behavior consistent across all workflows.
-
----
-
-## POLICY_PROMPT
-
-**Purpose**
-
-Used only for shipping, return, refund, and exchange policy questions.
-
-**Inputs**
-
-* Retrieved context from `trendly_policy.md`.
-* Customer's question.
-
-**Prompt Behavior**
-
-* Answer only from the provided policy context.
-* Do not use outside knowledge.
-* If the answer is not present in the policy, clearly say so instead of making one up.
-
-**Reasoning**
-
-This prompt grounds Gemini's responses in Trendly's official policy document and reduces hallucinations.
+Rules:
+- Use the Trendly policy document as the only source of truth for policy questions.
+- Never invent policies or discounts.
+- Never expose customer personal information.
+- Explain decisions in simple customer-friendly language.
+- Escalate damaged, lost, wrong-size, or wrong-item issues to a human.
+```
 
 ---
 
-## CHAT_PROMPT
+# Prompt Engineering Strategy
 
-**Purpose**
+Instead of using one prompt for everything, prompts are specialized depending on the user's intent.
 
-Handles conversations that do not require policy retrieval or backend tools.
+## 1. Policy Prompt (RAG)
 
-**Examples**
+Used only for policy questions.
 
-* Greetings.
-* Thank-you messages.
-* General shopping assistance.
+```text
+Answer ONLY using the Trendly policy below.
 
-**Behavior**
+Policy Context:
+{retrieved_policy_chunks}
 
-Uses the conversation history to produce natural responses while following the rules defined in `SYSTEM_PROMPT`.
+Customer Question:
+{user_question}
+
+If the answer is not present in the policy, clearly say so.
+```
+
+Purpose:
+
+* Prevent hallucinations.
+* Ground responses in `trendly_policy.md`.
 
 ---
 
-## Prompt Iterations
+## 2. General Conversation Prompt
 
-### Iteration 1 — Single Prompt
+Used for greetings and general assistance.
 
-Initially, one prompt handled every conversation.
+```text
+Customer:
+{message}
 
-**Issue:** Policy questions sometimes relied on Gemini's general knowledge instead of the provided document.
+Assistant:
+```
 
-### Iteration 2 — Dedicated Policy Prompt
+Purpose:
 
-A separate `POLICY_PROMPT` was introduced for RAG-based policy questions.
+* Keep conversation natural.
+* Avoid unnecessary policy retrieval.
 
-**Improvement:** Policy responses became grounded in `trendly_policy.md` only.
+---
 
-### Iteration 3 — Safety Refinements
+## 3. Tool-Orchestrated Prompts
 
-The system prompt was updated to explicitly refuse:
+The assistant first decides whether to use a tool.
 
-* Invented Trendly policies.
+Examples:
+
+| Intent                  | Tool Used                  |
+| ----------------------- | -------------------------- |
+| Order ID present        | lookup_order()             |
+| Return request          | check_return_eligibility() |
+| Damaged/Lost/Wrong item | escalate_to_human()        |
+| Policy question         | search_policy()            |
+
+The LLM receives tool output instead of generating factual information itself.
+
+---
+
+# Prompt Iterations
+
+## Version 1
+
+Single prompt handled every message.
+
+Problem:
+
+* Hallucinated return policy.
+* Didn't use order data.
+
+## Version 2
+
+Added RAG for policy questions.
+
+Improvement:
+
+* Shipping/refund answers grounded in policy.
+
+## Version 3
+
+Added tool orchestration.
+
+Improvement:
+
+* Returns depend on both order data and policy.
+* Human escalation added.
+* Safety refusals implemented.
+
+---
+
+# Guardrails
+
+The assistant explicitly refuses:
+
+* Inventing Trendly policies.
 * Unauthorized discounts.
-* Requests for another customer's phone number or email address.
+* Customer phone numbers or email addresses.
+* Unsupported refund requests.
 
-**Improvement:** Reduced hallucinations and ensured consistent safety behavior across conversations.
+These checks happen before the LLM is called whenever possible.
