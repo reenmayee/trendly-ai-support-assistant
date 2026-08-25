@@ -1,20 +1,15 @@
 import json
 from datetime import datetime
-import uuid
 
-# ---------------- LOAD ORDERS ----------------
+# Load orders.json once
 with open("orders.json", "r", encoding="utf-8") as f:
     ORDER_DATA = json.load(f)
 
 ORDERS = ORDER_DATA["orders"]
 
-# Fixed evaluation date for assignment
-TODAY = datetime.strptime("2026-08-18", "%Y-%m-%d")
-RETURN_WINDOW = 30
 
-
-# ---------------- ORDER LOOKUP ----------------
 def lookup_order(order_id):
+    """Find an order by Order ID."""
     order_id = order_id.strip().upper()
 
     for order in ORDERS:
@@ -24,130 +19,100 @@ def lookup_order(order_id):
     return None
 
 
-# ---------------- RETURN / EXCHANGE ELIGIBILITY ----------------
 def check_return_eligibility(order_id):
+    """
+    Checks whether an order is eligible for return or exchange.
+    Returns a dictionary with eligibility and message.
+    """
 
     order = lookup_order(order_id)
 
     if not order:
         return {
             "eligible": False,
-            "message": "Order not found.",
-            "item": None,
-            "order_id": order_id,
-            "days_since_delivery": None,
-            "days_remaining": None
+            "message": "Order not found."
         }
 
     status = order["status"]
-    item = order["items"][0]
 
-    # Cancelled orders
+    # 1. Already cancelled
     if status == "cancelled":
         return {
             "eligible": False,
-            "message": "This order has already been cancelled and refunded.",
-            "item": item["name"],
-            "order_id": order_id,
-            "days_since_delivery": None,
-            "days_remaining": None
+            "message": "This order was already cancelled and refunded, so a return cannot be created."
         }
 
-    # Lost shipment
+    # 2. Lost parcel
     if status == "lost_in_transit":
         return {
             "eligible": False,
-            "message": "This shipment is marked as lost in transit and requires human support.",
-            "item": item["name"],
-            "order_id": order_id,
-            "days_since_delivery": None,
-            "days_remaining": None
+            "message": "This shipment appears to be lost in transit. I'll escalate this to a human support specialist."
         }
 
-    # Not delivered yet
+    # 3. Must be delivered first
     if status != "delivered":
         return {
             "eligible": False,
-            "message": f"This order is currently '{status.replace('_',' ')}'. Returns are only available after delivery.",
-            "item": item["name"],
-            "order_id": order_id,
-            "days_since_delivery": None,
-            "days_remaining": None
+            "message": f"This order is currently '{status.replace('_', ' ')}'. Returns are available only after delivery."
         }
 
-    # Delivery date calculation
+    # Delivery date
     delivered_date = datetime.strptime(
         order["delivered_at"][:10],
         "%Y-%m-%d"
     )
 
-    days_since_delivery = (TODAY - delivered_date).days
-    days_remaining = max(0, RETURN_WINDOW - days_since_delivery)
+    # Fixed evaluation date for Yellow.ai assignment
+    today = datetime.strptime("2026-08-18", "%Y-%m-%d")
+    days_since_delivery = (today - delivered_date).days
 
-    # Jewellery restriction
-    if item["category"].lower() == "jewellery":
+    item = order["items"][0]
+
+    # 4. Jewellery restriction (checked BEFORE date)
+    if item["category"] == "jewellery":
         return {
             "eligible": False,
-            "message": "Jewellery items are non-returnable according to Trendly policy.",
-            "item": item["name"],
-            "order_id": order_id,
-            "days_since_delivery": days_since_delivery,
-            "days_remaining": days_remaining
+            "message": "Jewellery items are non-returnable for hygiene reasons."
         }
 
-    # Final Sale
-    if item.get("final_sale", False):
+    # 5. Final Sale restriction (checked BEFORE date)
+    if item.get("final_sale"):
         return {
             "eligible": "exchange_only",
-            "message": "This item was purchased as Final Sale and is eligible for exchange only.",
-            "item": item["name"],
-            "order_id": order_id,
-            "days_since_delivery": days_since_delivery,
-            "days_remaining": days_remaining
+            "message": "This item was purchased as FINAL SALE and is eligible for exchange only, not a refund."
         }
 
-    # Outside return window
-    if days_since_delivery > RETURN_WINDOW:
+    # 6. Outside return window
+    if days_since_delivery > 30:
         return {
             "eligible": False,
-            "message": f"This order was delivered {days_since_delivery} days ago, which exceeds Trendly's 30-day return window.",
-            "item": item["name"],
-            "order_id": order_id,
-            "days_since_delivery": days_since_delivery,
-            "days_remaining": 0
+            "message": f"This order was delivered {days_since_delivery} days ago, which is outside Trendly's 30-day return window."
         }
 
-    # Eligible
+    # 7. Happy path
     return {
         "eligible": True,
-        "message": f"{item['name']} is eligible for return under Trendly's 30-day return policy.",
+        "message": f"{item['name']} is eligible for return. Your return request has been initiated.",
         "item": item["name"],
-        "order_id": order_id,
-        "days_since_delivery": days_since_delivery,
-        "days_remaining": days_remaining
+        "order_id": order["order_id"]
     }
 
-
-# ---------------- HUMAN ESCALATION ----------------
 def escalate_to_human(order_id, customer_issue):
+    """
+    Creates a human-readable escalation summary.
+    """
 
     order = lookup_order(order_id)
 
     if not order:
-        return "Unable to create escalation because the order was not found."
-
-    ticket_id = f"ESC-{str(uuid.uuid4())[:8].upper()}"
+        return "Unable to escalate because the order was not found."
 
     summary = f"""
-Ticket ID: {ticket_id}
-
-Issue Category: Customer Support Escalation
+🚨 HUMAN ESCALATION REQUIRED
 
 Order ID: {order["order_id"]}
 
-Customer: {order["customer_name"]}
-
-Issue Reported:
+Customer Issue:
 {customer_issue}
 
 Order Status:
@@ -157,13 +122,13 @@ Item:
 {order["items"][0]["name"]}
 
 Carrier:
-{order.get("carrier","N/A")}
+{order["carrier"]}
 
 Shipping City:
 {order["shipping_city"]}
 
 Recommended Action:
-Review shipment details, verify customer claim, and contact customer within 24 hours.
+A human support specialist should review this shipment and contact the customer.
 """
 
-    return summary.strip()
+    return summary
