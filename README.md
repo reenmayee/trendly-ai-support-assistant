@@ -27,7 +27,7 @@ Built for the **Yellow.ai Generative AI Developer Internship Assignment**.
 | ---------- | --------------------------------- |
 | Frontend   | Streamlit                         |
 | LLM        | Gemini 3.6 Flash                  |
-| Retrieval  | LangChain + ChromaDB              |
+| Retrieval  | LangChain                         |
 | Embeddings | HuggingFace Sentence Transformers |
 | Backend    | Python                            |
 
