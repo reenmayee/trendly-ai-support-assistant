@@ -23,13 +23,13 @@ Built for the **Yellow.ai Generative AI Developer Internship Assignment**.
 
 ## 🧠 Tech Stack
 
-| Component  | Technology                        |
-| ---------- | --------------------------------- |
-| Frontend   | Streamlit                         |
-| LLM        | Gemini 3.6 Flash                  |
-| Retrieval  | LangChain                         |
-| Embeddings | HuggingFace Sentence Transformers |
-| Backend    | Python                            |
+| Component  | Technology                         |
+| ---------- | ---------------------------------  |
+| Frontend   | Streamlit                          |
+| LLM        | Gemini 3.6 Flash                   |
+| Retrieval  | LangChain                          |
+| Embeddings | HuggingFace, Sentence Transformers |
+| Backend    | Python                             |
 
 ---
 
